@@ -69,6 +69,7 @@ export default function AddBookmarkModal({
               variant="outline"
               onClick={onClose}
               disabled={loading}
+              className='cursor-pointer'
             >
               Cancel
             </Button>
@@ -76,6 +77,7 @@ export default function AddBookmarkModal({
             <Button
               onClick={handleSave}
               disabled={loading}
+              className='cursor-pointer'
             >
               {loading ? 'Saving…' : 'Save'}
             </Button>
