@@ -19,25 +19,77 @@ export default function Home() {
   const [addOpen, setAddOpen] = useState(false)
 
   useEffect(() => {
-    const fetchUser = async () => {
-      const { data } = await supabase.auth.getUser()
-      setUser(data.user)
-      if (data.user) await fetchBookmarks(1, data.user)
-      else setLoading(false)
-    }
-    fetchUser()
+    supabase.auth.getSession().then(({ data }) => {
+      const sessionUser = data.session?.user ?? null
+      setUser(sessionUser)
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user || null)
-      if (!session?.user) {
-        setBookmarks([])
-        setPage(1)
-        setTotalPages(1)
+      if (sessionUser) {
+        fetchBookmarks(1, sessionUser)
       }
     })
 
-    return () => listener.subscription.unsubscribe()
+    // 2️⃣ Listen to auth changes (login/logout)
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        const sessionUser = session?.user ?? null
+        setUser(sessionUser)
+
+        if (sessionUser) {
+          fetchBookmarks(1, sessionUser)
+        } else {
+          setBookmarks([])
+          setPage(1)
+          setTotalPages(1)
+        }
+      }
+    )
+
+    return () => {
+      authListener.subscription.unsubscribe()
+    }
   }, [])
+
+  useEffect(() => {
+    if (!user) return
+
+    const channel = supabase
+      .channel('bookmarks-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'bookmarks',
+          filter: `user_id=eq.${user.id}`,
+        },
+        payload => {
+          setBookmarks(prev => {
+            if (payload.eventType === 'INSERT') {
+              if (prev.some(b => b.id === payload.new.id)) return prev
+
+              if (page === 1) {
+                return [payload.new, ...prev].slice(0, PAGE_SIZE)
+              }
+
+              return prev
+            }
+
+            if (payload.eventType === 'DELETE') {
+              return prev.filter(b => b.id !== payload.old.id)
+            }
+
+            return prev
+          })
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [user, page])
+
+
 
   const fetchBookmarks = async (pageNo: number, currentUser?: any) => {
     const activeUser = currentUser || user
@@ -88,42 +140,49 @@ export default function Home() {
     return value
   }
 
-  const handleAddBookmark = async ({ title, url }: { title: string; url: string }) => {
-    if (!user) return
+  const handleAddBookmark = async ({
+    title,
+    url,
+  }: {
+    title: string
+    url: string
+  }): Promise<boolean> => {
+    if (!user) return false
 
     const cleanTitle = title.trim()
     let cleanUrl = url.trim()
 
     if (!cleanTitle) {
       toast.error('Title is required.')
-      return
+      return false
     }
 
     if (cleanTitle.length < 2) {
       toast.error('Title must be at least 2 characters.')
-      return
+      return false
     }
 
     if (!cleanUrl) {
       toast.error('URL is required.')
-      return
+      return false
     }
 
     cleanUrl = normalizeUrl(cleanUrl)
 
     if (!isValidUrl(cleanUrl)) {
       toast.error('Please enter a valid URL.')
-      return
+      return false
     }
 
-    // 🔵 Insert into DB (DB enforces uniqueness)
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('bookmarks')
       .insert({
         title: cleanTitle,
         url: cleanUrl.toLowerCase(),
-        user_id: user.id
+        user_id: user.id,
       })
+      .select()
+      .single()
 
     if (error) {
       if (error.code === '23505') {
@@ -131,18 +190,32 @@ export default function Home() {
       } else {
         toast.error('Something went wrong. Please try again.')
       }
-      return
+      return false
+    }
+
+    if (page === 1 && data) {
+      setBookmarks(prev => [data, ...prev].slice(0, PAGE_SIZE))
     }
 
     toast.success('Bookmark added successfully!')
-
-    fetchBookmarks(1)
+    return true
   }
 
 
   const handleDelete = async (id: string) => {
-    await supabase.from('bookmarks').delete().eq('id', id)
-    fetchBookmarks(page)
+    const previous = bookmarks
+
+    setBookmarks(prev => prev.filter(b => b.id !== id))
+
+    const { error } = await supabase
+      .from('bookmarks')
+      .delete()
+      .eq('id', id)
+
+    if (error) {
+      setBookmarks(previous)
+      toast.error('Failed to delete bookmark.')
+    }
   }
 
   const handleLogin = async () => {
@@ -169,7 +242,7 @@ export default function Home() {
 
       <div className="p-10 flex flex-col gap-10 relative top-15">
         {/* HERO */}
-        <main className="flex flex-col gap-10">
+        <main className="flex flex-col gap-6">
           <div className="flex flex-col gap-2">
             <h1 className="text-5xl font-medium">Welcome to Smart Bookmark</h1>
             <p className="text-lg text-muted-foreground">
@@ -178,9 +251,12 @@ export default function Home() {
           </div>
           
           {!user && (
-            <Button size="lg" onClick={handleLogin}>
-              Sign in with Google
-            </Button>
+            <div className='text-muted-foreground space-y-2'>
+              <p>Sign in to start saving and organizing your bookmarks</p>
+              <Button size="lg" className='w-fit' onClick={handleLogin}>
+                Sign in with Google
+              </Button>
+            </div>
           )}
           
         </main>
