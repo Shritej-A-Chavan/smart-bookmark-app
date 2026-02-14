@@ -253,7 +253,7 @@ export default function Home() {
           {!user && (
             <div className='text-muted-foreground space-y-2'>
               <p>Sign in to start saving and organizing your bookmarks</p>
-              <Button size="lg" className='w-fit' onClick={handleLogin}>
+              <Button size="lg" className='w-fit cursor-pointer' onClick={handleLogin}>
                 Sign in with Google
               </Button>
             </div>
