@@ -28,7 +28,6 @@ export default function Home() {
       }
     })
 
-    // 2️⃣ Listen to auth changes (login/logout)
     const { data: authListener } = supabase.auth.onAuthStateChange(
       (_event, session) => {
         const sessionUser = session?.user ?? null
@@ -53,7 +52,7 @@ export default function Home() {
     if (!user) return
 
     const channel = supabase
-      .channel('bookmarks-realtime')
+      .channel(`bookmarks-${user.id}`)
       .on(
         'postgres_changes',
         {
@@ -66,16 +65,17 @@ export default function Home() {
           setBookmarks(prev => {
             if (payload.eventType === 'INSERT') {
               if (prev.some(b => b.id === payload.new.id)) return prev
-
-              if (page === 1) {
-                return [payload.new, ...prev].slice(0, PAGE_SIZE)
-              }
-
-              return prev
+              return [payload.new, ...prev]
             }
 
             if (payload.eventType === 'DELETE') {
               return prev.filter(b => b.id !== payload.old.id)
+            }
+
+            if (payload.eventType === 'UPDATE') {
+              return prev.map(b =>
+                b.id === payload.new.id ? payload.new : b
+              )
             }
 
             return prev
@@ -87,9 +87,7 @@ export default function Home() {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [user, page])
-
-
+  }, [user])
 
   const fetchBookmarks = async (pageNo: number, currentUser?: any) => {
     const activeUser = currentUser || user
@@ -121,9 +119,7 @@ export default function Home() {
 
     setLoading(false)
   }
-
  
-
   const isValidUrl = (value: string) => {
     try {
       new URL(value)
@@ -201,7 +197,6 @@ export default function Home() {
     return true
   }
 
-
   const handleDelete = async (id: string) => {
     const previous = bookmarks
 
@@ -217,6 +212,7 @@ export default function Home() {
       toast.error('Failed to delete bookmark.')
     }
   }
+
 
   const handleLogin = async () => {
     await supabase.auth.signInWithOAuth({ provider: 'google' })
